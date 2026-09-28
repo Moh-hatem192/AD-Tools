@@ -5,6 +5,7 @@
 #  Layout: ~/AD/{tools,executables,powershell-scripts,CVEs,tunneling/ligolo}
 #          ~/pentest-tools/  (general-purpose, non-AD-specific tools)
 #          ~/OT-tools/       (Modbus/ICS/SCADA-specific tools)
+#          ~/mobile-tools/   (Android/APK analysis tools)
 # =============================================================================
 
 set -uo pipefail
@@ -25,6 +26,7 @@ AD_ROOT="${HOME}/AD"
 PENTEST_ROOT="${HOME}/pentest-tools"
 OT_ROOT="${HOME}/OT-tools"
 OT_TOOLKIT="${OT_ROOT}/ot-toolkit"
+MOBILE_ROOT="${HOME}/mobile-tools"
 TOOLS="${AD_ROOT}/tools"
 EXECUTABLES="${AD_ROOT}/executables"
 PSSCRIPTS="${AD_ROOT}/powershell-scripts"
@@ -251,7 +253,7 @@ surface_entrypoint_global() { # surface_entrypoint_global <root> <tool> <path/in
 clear 2>/dev/null || true
 box "$CYAN" "HTU Pentesting Toolkit being installed." \
             "" \
-            "target: ${AD_ROOT/#$HOME/~} + ${PENTEST_ROOT/#$HOME/~} + ${OT_ROOT/#$HOME/~}" \
+            "target: ${AD_ROOT/#$HOME/~} + ${PENTEST_ROOT/#$HOME/~} + ${OT_ROOT/#$HOME/~} + ${MOBILE_ROOT/#$HOME/~}" \
             "host: $(hostname)    user: $(whoami)"
 
 require_sudo
@@ -294,6 +296,7 @@ PENTEST_PACKAGES=(
     "john|john|John the Ripper"
     "gobuster|gobuster|Gobuster"
     "ffuf|ffuf|ffuf"
+    "feroxbuster|feroxbuster|feroxbuster"
     "metasploit-framework|msfconsole|Metasploit Framework"
     "peass|linpeas|LinPEAS"
     "whatweb|whatweb|WhatWeb"
@@ -305,6 +308,8 @@ PENTEST_PACKAGES=(
     "python3-shodan|shodan|Shodan CLI"
     "python3-censys|censys|Censys CLI"
     "nuclei|nuclei|Nuclei"
+    "wpscan|wpscan|WPScan (WordPress)"
+    "joomscan|joomscan|JoomScan (Joomla)"
 )
 # apt-pkg|binary|friendly-name    (runtime deps for the custom-built tools below
 # - not tools in their own right, so NOT symlinked into pentest-tools/)
@@ -317,6 +322,7 @@ PENTEST_DEPS=(
 # surfaced system-wide via surface_entrypoint_global, see section 8)
 PENTEST_GIT_TOOLS=(
     "LinEnum|https://github.com/rebootuser/LinEnum|LinEnum.sh"
+    "jwt_tool|https://github.com/ticarpi/jwt_tool|jwt_tool.py"
 )
 # name|git-url|entrypoint-inside-repo   (Modbus/ICS-specific - cloned into
 # OT-tools/<name> instead of pentest-tools/, see section 9)
@@ -324,8 +330,18 @@ OT_GIT_TOOLS=(
     "mbtget|https://github.com/sourceperl/mbtget|scripts/mbtget"
     "plcscan|https://github.com/meeas/plcscan|plcscan.py"
 )
+# apt-pkg|binary|friendly-name    (Android/APK analysis - all apt on Kali;
+# each gets symlinked into mobile-tools/ AND /usr/local/bin, see section 10)
+MOBILE_PACKAGES=(
+    "apktool|apktool|Apktool"
+    "jadx|jadx-gui|JADX (jadx-gui)"
+    "dex2jar|d2j-dex2jar|dex2jar"
+    "apksigner|apksigner|apksigner"
+    "ghidra|ghidra|Ghidra"
+)
 TOTAL=$(( ${#GIT_TOOLS[@]} + ${#PACKAGES[@]} + ${#PENTEST_PACKAGES[@]} \
-        + ${#PENTEST_DEPS[@]} + ${#PENTEST_GIT_TOOLS[@]} + ${#OT_GIT_TOOLS[@]} + 13 ))
+        + ${#PENTEST_DEPS[@]} + ${#PENTEST_GIT_TOOLS[@]} + ${#OT_GIT_TOOLS[@]} \
+        + ${#MOBILE_PACKAGES[@]} + 17 ))
 
 # ============================ 1. SYSTEM PREP =================================
 step "System preparation (apt update + build dependencies)"
@@ -577,6 +593,40 @@ else
     fi
 fi
 
+# --- droopescan: Drupal/Silverstripe/Moodle scanner. No reliable apt package,
+# so pipx (isolated venv) is the maintained install path. Rounds out the CMS
+# trio (WordPress via wpscan, Joomla via joomscan, both apt above). ---
+step "Installing droopescan (Drupal/CMS scanner)"
+if have droopescan; then
+    skip "droopescan already installed ($(command -v droopescan))"
+else
+    info "installing droopescan via pipx..."
+    if run pipx install --force droopescan && { have droopescan || { export PATH="${HOME}/.local/bin:$PATH"; have droopescan; }; }; then
+        ln -sf "$(command -v droopescan)" "${PENTEST_ROOT}/droopescan" 2>/dev/null
+        ok "droopescan installed ($(command -v droopescan))"
+    else
+        fail "droopescan (pipx install failed - see $LOG)"
+    fi
+fi
+
+# --- SecLists: the wordlist arsenal (dir/param/subdomain/password lists that
+# ffuf, gobuster, feroxbuster etc. all feed on). apt drops it under
+# /usr/share/seclists; it has no binary, so it's verified by directory. ---
+step "Installing SecLists wordlist arsenal"
+SECLISTS_DIR="/usr/share/seclists"
+if [[ -d "$SECLISTS_DIR" && -n "$(ls -A "$SECLISTS_DIR" 2>/dev/null)" ]]; then
+    skip "SecLists already present -> ${SECLISTS_DIR}"
+    ln -sf "$SECLISTS_DIR" "${PENTEST_ROOT}/seclists" 2>/dev/null
+else
+    info "installing seclists via apt (pulls a few hundred MB, be patient)..."
+    if run $SUDO apt-get install "${APT_OPTS[@]}" seclists && [[ -d "$SECLISTS_DIR" ]]; then
+        ln -sf "$SECLISTS_DIR" "${PENTEST_ROOT}/seclists" 2>/dev/null
+        ok "SecLists -> ${SECLISTS_DIR}  (linked at ${PENTEST_ROOT/#$HOME/~}/seclists)"
+    else
+        fail "SecLists (apt install 'seclists' failed - see $LOG)"
+    fi
+fi
+
 # --- Nuclei OT/ICS templates: not a separate apt package - pulled via nuclei's
 # own official updater, which is also what fetches the ics/scada-tagged ones. ---
 step "Updating Nuclei templates (incl. ics/scada tags)"
@@ -687,6 +737,46 @@ else
     (( MISSING_OT == 0 )) && ok "OT-toolkit scripts available system-wide (attack_pump.py, device_fingerprint.py, recon_sweep.py, sensor_spoof.py, unit_id_scanner.py)"
 fi
 
+# ==================== 10. MOBILE-TOOLS (Android/APK analysis) ================
+# Static + dynamic Android tooling. Everything here except frida ships as an
+# apt package on Kali; frida's CLIs come from pipx (frida-tools). Same layout
+# convention as pentest-tools: symlinked into mobile-tools/ AND /usr/local/bin.
+step "Creating ${MOBILE_ROOT/#$HOME/~} (Android/APK analysis tools)"
+if [[ -d "$MOBILE_ROOT" ]]; then
+    skip "${MOBILE_ROOT/#$HOME/~} already exists"
+else
+    mkdir -p "$MOBILE_ROOT" && ok "${MOBILE_ROOT/#$HOME/~}" || fail "mkdir ${MOBILE_ROOT}"
+fi
+
+for entry in "${MOBILE_PACKAGES[@]}"; do
+    IFS='|' read -r pkg bin name <<<"$entry"
+    step "Installing ${name}"
+    apt_pkg "$pkg" "$bin" "$name"
+    if have "$bin"; then
+        run $SUDO ln -sf "$(command -v "$bin")" "/usr/local/bin/${bin}"
+        ln -sf "$(command -v "$bin")" "${MOBILE_ROOT}/${bin}"
+        note "available system-wide (/usr/local/bin/${bin}), linked at ${MOBILE_ROOT/#$HOME/~}/${bin}"
+    fi
+done
+
+# --- Frida: dynamic instrumentation toolkit. pipx frida-tools ships the
+# frida / frida-ps / frida-trace CLIs. The on-device frida-server (matching
+# frida version AND device/emulator arch) still has to be pushed separately
+# at engagement time - the CLI alone does not include it. ---
+step "Installing Frida (frida-tools)"
+if have frida; then
+    skip "frida already installed ($(command -v frida))"
+else
+    info "installing frida-tools via pipx..."
+    if run pipx install --force frida-tools && { have frida || { export PATH="${HOME}/.local/bin:$PATH"; have frida; }; }; then
+        ln -sf "$(command -v frida)" "${MOBILE_ROOT}/frida" 2>/dev/null
+        ok "frida installed ($(command -v frida))"
+        note "push a matching frida-server to the device/emulator before dynamic work"
+    else
+        fail "frida (pipx install failed - see $LOG)"
+    fi
+fi
+
 # ============================ FINAL VERIFICATION =============================
 box "$YELLOW" "QUICK CHECK - verifying every tool"
 
@@ -753,6 +843,7 @@ check_cmd hashcat          "hashcat"
 check_cmd john             "John the Ripper"
 check_cmd gobuster         "Gobuster"
 check_cmd ffuf             "ffuf"
+check_cmd feroxbuster      "feroxbuster"
 check_cmd msfconsole       "Metasploit"
 check_cmd linpeas          "LinPEAS"
 check_cmd whatweb          "WhatWeb"
@@ -760,12 +851,17 @@ check_cmd wireshark        "Wireshark"
 check_cmd nmap             "Nmap"
 check_cmd burpsuite        "Burp Suite"
 check_cmd LinEnum.sh       "LinEnum"
+check_cmd jwt_tool.py      "jwt_tool"
 check_cmd wappalyzer       "Wappalyzer CLI"
 check_cmd theHarvester     "theHarvester"
 check_cmd recon-ng         "Recon-ng"
 check_cmd shodan           "Shodan CLI"
 check_cmd censys           "Censys CLI"
 check_cmd nuclei           "Nuclei"
+check_cmd wpscan           "WPScan"
+check_cmd joomscan         "JoomScan"
+check_cmd droopescan       "droopescan"
+check_dir "$SECLISTS_DIR"  "SecLists"
 
 group "OT-tools (${OT_ROOT/#$HOME/~})"
 check_cmd mbtget           "mbtget"
@@ -778,6 +874,14 @@ check_cmd device_fingerprint.py  "OT: device_fingerprint"
 check_cmd recon_sweep.py         "OT: recon_sweep"
 check_cmd sensor_spoof.py        "OT: sensor_spoof"
 check_cmd unit_id_scanner.py     "OT: unit_id_scanner"
+
+group "Mobile-tools (${MOBILE_ROOT/#$HOME/~})"
+check_cmd apktool          "Apktool"
+check_cmd jadx-gui         "JADX (jadx-gui)"
+check_cmd d2j-dex2jar      "dex2jar"
+check_cmd apksigner        "apksigner"
+check_cmd ghidra           "Ghidra"
+check_cmd frida            "Frida"
 _endrow
 
 if (( MISSING > 0 )); then
@@ -801,6 +905,8 @@ if have tree; then tree -L 2 "$PENTEST_ROOT" 2>/dev/null | head -40
 else find "$PENTEST_ROOT" -maxdepth 2 -not -path '*/.*' | sed "s|${HOME}|~|" | sort | head -40; fi
 if have tree; then tree -L 2 "$OT_ROOT" 2>/dev/null | head -40
 else find "$OT_ROOT" -maxdepth 2 -not -path '*/.*' | sed "s|${HOME}|~|" | sort | head -40; fi
+if have tree; then tree -L 2 "$MOBILE_ROOT" 2>/dev/null | head -40
+else find "$MOBILE_ROOT" -maxdepth 2 -not -path '*/.*' | sed "s|${HOME}|~|" | sort | head -40; fi
 
 box "$GREEN" "HTU Pentesting Toolkit finished installing," \
              "wish you a successful penetration testing."
