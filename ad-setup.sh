@@ -45,7 +45,7 @@ case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
     i386|i686)     LIGOLO_ARCH="386";   KERBRUTE_ARCH="386"   ;;
     *)             LIGOLO_ARCH="amd64"; KERBRUTE_ARCH="amd64" ;;
 esac
-ADTOOLS_REPO="https://github.com/Moh-hatem192/AD-Tools"
+ADTOOLS_REPO="https://github.com/"
 ADTOOLS_CACHE="${AD_ROOT}/.AD-Tools"
 
 LOG="${AD_ROOT}/install.log"
