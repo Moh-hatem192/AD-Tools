@@ -9,6 +9,10 @@ Get-MpComputerStatus
 Set-MpPreference -DisableRealtimeMonitoring $true
 Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
 
+# Bloodhound linux
+sudo bloodhound-setup
+sudo bloodhound-start
+
 # Time Sync with DC from linux
 sudo timedatectl set-ntp off
 sudo ntpdate -u $DC_IP
